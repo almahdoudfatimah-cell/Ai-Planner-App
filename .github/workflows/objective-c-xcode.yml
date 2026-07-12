@@ -1,30 +1,63 @@
-name: Xcode - Build and Analyze
+name: iOS Build and Test
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ "main" ]
+    branches: [ main, develop ]
 
 jobs:
-  build:
-    name: Build and analyse default scheme using xcodebuild command
-    runs-on: macos-latest
+  build-and-test:
+    name: Build and Test App
+    runs-on: macos-15
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Set Default Scheme
+
+      - name: Set up Xcode Version
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      # 1. Cache Swift Package Manager Dependencies (Speeds up builds)
+      - name: Cache Swift PM Packages
+        uses: actions/cache@v4
+        with:
+          path: SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Resolve Swift Packages
         run: |
-          scheme_list=$(xcodebuild -list -json | tr -d "\n")
-          default=$(echo $scheme_list | ruby -e "require 'json'; puts JSON.parse(STDIN.gets)['project']['targets'][0]")
-          echo $default | cat >default
-          echo Using default scheme: $default
-      - name: Build
-        env:
-          scheme: ${{ 'default' }}
+          xcodebuild -resolvePackageDependencies \
+            -clonedSourcePackagesDirPath SourcePackages
+
+      # 2. Run Tests and output a clean log
+      - name: Run Unit & UI Tests
         run: |
-          if [ $scheme = default ]; then scheme=$(cat default); fi
-          if [ "`ls -A | grep -i \\.xcworkspace\$`" ]; then filetype_parameter="workspace" && file_to_build="`ls -A | grep -i \\.xcworkspace\$`"; else filetype_parameter="project" && file_to_build="`ls -A | grep -i \\.xcodeproj\$`"; fi
-          file_to_build=`echo $file_to_build | awk '{$1=$1;print}'`
-          xcodebuild clean build analyze -scheme "$scheme" -"$filetype_parameter" "$file_to_build" | xcpretty && exit ${PIPESTATUS[0]}
+          xcodebuild test \
+            -scheme "fm" \
+            -destination "generic/platform=iOS Simulator" \
+            -clonedSourcePackagesDirPath SourcePackages \
+            -derivedDataPath Build/DerivedData \
+            -resultBundlePath Build/TestResults.xcresult
+
+      # 3. Build Archive (CI validation check)
+      - name: Build Archive (Skip Signing)
+        run: |
+          xcodebuild archive \
+            -scheme "fm" \
+            -sdk iphoneos \
+            -archivePath $GITHUB_WORKSPACE/build/fm.xcarchive \
+            -clonedSourcePackagesDirPath SourcePackages \
+            CODE_SIGNING_ALLOWED=NO
+
+      # 4. Upload Test Bundles if a test fails (Crucial for debugging)
+      - name: Upload Test Results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcode-test-results
+          path: Build/TestResults.xcresult
+
+xcodebuild clean build analyze -scheme "$scheme" -"$filetype_parameter" "$file_to_build" -destination "platform=iOS Simulator,name=iPad Air,OS=latest" | xcpretty && exit ${PIPESTATUS[0]}
