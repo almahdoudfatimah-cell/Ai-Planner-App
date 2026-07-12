@@ -37,7 +37,7 @@ jobs:
  run: |\
   xcodebuild test \
     -scheme "fm" \
-    -destination "platform=iOS Simulator,name=iPhone 16,OS=latest" \
+    -destination "platform=iOS Simulator,name=Air,OS=latest" \
     -clonedSourcePackagesDirPath SourcePackages \
     -derivedDataPath Build/DerivedData \
     -resultBundlePath Build/TestResults.xcresult
